@@ -250,10 +250,12 @@ function stopExchange(ex) {
   const c = conns[ex];
   if (!c) return;
   c.stopped = true;
+  c.polling = false;
   clearTimeout(c.failTimer);
   clearTimeout(c.reconnectTimer);
   clearInterval(c.pingTimer);
-  clearInterval(c.pollTimer);
+  clearTimeout(c.pollTimer);
+  clearTimeout(c.wsRetryTimer);
   if (c.ws) { try { c.ws.close(); } catch {} }
   conns[ex] = null;
 }
@@ -261,10 +263,11 @@ function stopExchange(ex) {
 function startExchange(ex, codes) {
   stopExchange(ex);
   if (codes.length === 0) { setStatus(ex, 'err', capitalize(ex) + ' (상장 코인 없음)'); return; }
-  const conn = { codes, ws: null, stopped: false,
-                 failTimer: null, reconnectTimer: null, pingTimer: null, pollTimer: null };
+  const conn = { codes, ws: null, stopped: false, polling: false, wsFails: 0,
+                 failTimer: null, reconnectTimer: null, pingTimer: null, pollTimer: null, wsRetryTimer: null };
   conns[ex] = conn;
   connectWS(ex, conn);
+  primeSnapshot(ex, conn);
 }
 
 // ---------- WebSocket (Upbit 포맷 — Bithumb 2.0 API 동일 포맷) ----------
@@ -284,7 +287,7 @@ function connectWS(ex, conn) {
 
   ws.onopen = () => {
     if (conn.stopped) return;
-    setStatus(ex, 'wait', capitalize(ex) + ' 구독 중…');
+    if (!conn.polling) setStatus(ex, 'wait', capitalize(ex) + ' 구독 중…');
     ws.send(JSON.stringify([
       { ticket: 'price-diff-viewer' },
       { type: 'ticker', codes: conn.codes },
@@ -300,15 +303,32 @@ function connectWS(ex, conn) {
     } catch { return; }
     if (data.error) { console.warn(ex + ' WS error:', data.error); return; }
     if (data.type !== 'ticker' || !data.code) return;
-    if (!gotData) { gotData = true; setStatus(ex, 'ok', capitalize(ex) + ' 실시간'); }
+    if (!gotData) {
+      gotData = true;
+      conn.wsFails = 0;
+      if (conn.polling) { // WS 복구 성공 → 폴링 중단하고 실시간 복귀
+        conn.polling = false;
+        clearTimeout(conn.pollTimer);
+        clearTimeout(conn.wsRetryTimer);
+      }
+      setStatus(ex, 'ok', capitalize(ex) + ' 실시간');
+    }
     onPrice(ex, data.code.replace('KRW-', ''), data.trade_price);
   };
 
   ws.onclose = () => {
     clearTimeout(conn.failTimer);
     if (conn.stopped) return;
+    if (conn.polling) return; // 폴링 중 백그라운드 WS 복구 시도 실패 → 60초 뒤 재시도
+    if (!gotData) {
+      conn.wsFails++;
+      if (conn.wsFails >= 3) { startPolling(ex, conn); return; } // 연속 실패 → REST 폴링 전환
+    } else {
+      conn.wsFails = 0;
+    }
     setStatus(ex, 'err', capitalize(ex) + ' 재연결 중…');
-    conn.reconnectTimer = setTimeout(() => { if (!conn.stopped) connectWS(ex, conn); }, 3000);
+    const delay = Math.min(3000 * Math.pow(2, conn.wsFails), 15000); // 지수 백오프
+    conn.reconnectTimer = setTimeout(() => { if (!conn.stopped) connectWS(ex, conn); }, delay);
   };
   ws.onerror = () => { try { ws.close(); } catch {} };
 
@@ -319,23 +339,51 @@ function connectWS(ex, conn) {
 
 // ---------- REST 폴링 폴백 ----------
 function startPolling(ex, conn) {
+  if (conn.polling || conn.stopped) return;
+  conn.polling = true;
   setStatus(ex, 'wait', capitalize(ex) + ' 폴링 전환…');
   const url = EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(',');
+  let errs = 0;
   const tick = async () => {
-    if (conn.stopped) return;
+    if (conn.stopped || !conn.polling) return;
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(res.status);
       const list = await res.json();
+      errs = 0;
       setStatus(ex, 'ok', capitalize(ex) + ' 폴링(3s)');
       for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
     } catch (e) {
-      setStatus(ex, 'err', capitalize(ex) + ' 연결 실패');
+      errs++;
+      setStatus(ex, 'err', capitalize(ex) + ' 연결 실패 (재시도 중)');
       console.warn(ex + ' polling 실패:', e);
     }
+    if (conn.stopped || !conn.polling) return;
+    // 실패가 이어지면 폴링 간격을 늘려 rate limit 악화 방지 (최대 30초)
+    conn.pollTimer = setTimeout(tick, Math.min(3000 * (errs + 1), 30000));
   };
   tick();
-  conn.pollTimer = setInterval(tick, 3000);
+  scheduleWsRetry(ex, conn);
+}
+
+// 폴링 중 60초마다 WS 복구 시도 — 데이터 수신에 성공하면 onmessage에서 폴링을 중단
+function scheduleWsRetry(ex, conn) {
+  conn.wsRetryTimer = setTimeout(() => {
+    if (conn.stopped || !conn.polling) return;
+    connectWS(ex, conn);
+    scheduleWsRetry(ex, conn);
+  }, 60000);
+}
+
+// WS 연결을 기다리는 동안 REST 스냅샷으로 가격을 즉시 채움
+async function primeSnapshot(ex, conn) {
+  try {
+    const res = await fetch(EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(','), { cache: 'no-store' });
+    if (!res.ok) return;
+    const list = await res.json();
+    if (conn.stopped) return;
+    for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
+  } catch {}
 }
 
 function capitalize(s) { return s[0].toUpperCase() + s.slice(1); }
