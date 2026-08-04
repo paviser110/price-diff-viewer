@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upbit ↔ Bithumb 가격 비교</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b36;
+    --text: #e6e9ef;
+    --muted: #8a93a5;
+    --up: #f6465d;    /* 한국 관례: 빨강 = 상승/플러스 */
+    --down: #2f7cf6;  /* 파랑 = 하락/마이너스 */
+    --accent: #f0b90b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 20px; font-weight: 700; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .status-bar { display: flex; gap: 8px; margin: 12px 0 16px; flex-wrap: wrap; align-items: center; }
+  .pill {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #555; }
+  .pill.ok .dot { background: #2ecc71; }
+  .pill.err .dot { background: var(--up); }
+  .pill.wait .dot { background: var(--accent); }
+  #updated { margin-left: auto; font-size: 12px; color: var(--muted); }
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    font-size: 12px; font-weight: 600; color: var(--muted); text-align: right;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  thead th:first-child { text-align: left; }
+  tbody td {
+    padding: 11px 14px; text-align: right; font-size: 14px;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody td:first-child { text-align: left; font-weight: 700; }
+  .sym-quote { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .pos { color: var(--up); }
+  .neg { color: var(--down); }
+  .none { color: var(--muted); }
+  .premium { font-weight: 700; }
+  @keyframes flashUp   { 0% { background: rgba(246,70,93,.18); } 100% { background: transparent; } }
+  @keyframes flashDown { 0% { background: rgba(47,124,246,.18); } 100% { background: transparent; } }
+  td.flash-up   { animation: flashUp .6s ease-out; }
+  td.flash-down { animation: flashDown .6s ease-out; }
+  .table-scroll { overflow-x: auto; }
+  footer { margin-top: 14px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  #error-box {
+    display: none; margin: 12px 0; padding: 10px 14px; font-size: 13px;
+    border: 1px solid var(--up); border-radius: 8px; color: var(--up); background: rgba(246,70,93,.06);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Upbit ↔ Bithumb 가격 비교</h1>
+  </header>
+  <div class="sub">tokens.md에 나열된 토큰의 KRW 마켓 실시간 시세 · 차이 = 업비트 − 빗썸</div>
+
+  <div class="status-bar">
+    <span class="pill wait" id="st-upbit"><span class="dot"></span>Upbit</span>
+    <span class="pill wait" id="st-bithumb"><span class="dot"></span>Bithumb</span>
+    <span id="updated"></span>
+  </div>
+
+  <div id="error-box"></div>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>토큰</th>
+          <th>업비트 (KRW)</th>
+          <th>빗썸 (KRW)</th>
+          <th>차이 (KRW)</th>
+          <th>차이 (%)</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <footer>
+    실시간: WebSocket (연결 실패 시 3초 REST 폴링 자동 전환) · <code>tokens.md</code> 저장 시 3초 내 자동 반영 (새로고침 불필요)<br>
+    차이(%)가 <span class="pos">+빨강</span>이면 업비트가 더 비싸고, <span class="neg">−파랑</span>이면 빗썸이 더 비쌉니다.
+  </footer>
+</div>
+
+<script>
+'use strict';
+
+const EXCHANGES = {
+  upbit:   { ws: 'wss://api.upbit.com/websocket/v1',      rest: 'https://api.upbit.com/v1',   el: 'st-upbit' },
+  bithumb: { ws: 'wss://ws-api.bithumb.com/websocket/v1', rest: 'https://api.bithumb.com/v1', el: 'st-bithumb' },
+};
+
+const TOKENS_POLL_MS = 3000;
+
+// prices[symbol] = { upbit: number|null, bithumb: number|null }
+const prices = {};
+let symbols = [];
+const conns = { upbit: null, bithumb: null };  // 거래소별 연결 핸들
+const marketCache = { upbit: null, bithumb: null }; // market/all 결과 캐시 (Set)
+
+const $ = (id) => document.getElementById(id);
+
+function showError(msg) {
+  const box = $('error-box');
+  box.style.display = 'block';
+  box.textContent = msg;
+}
+function hideError() { $('error-box').style.display = 'none'; }
+
+function setStatus(ex, state, label) {
+  const el = $(EXCHANGES[ex].el);
+  el.className = 'pill ' + state;
+  el.innerHTML = '<span class="dot"></span>' + label;
+}
+
+function priceDigits(v) {
+  if (v < 1) return 4;
+  if (v < 100) return 2;
+  if (v < 1000) return 1;
+  return 0;
+}
+function fmtPrice(v) {
+  if (v == null) return '−';
+  const d = priceDigits(v);
+  return v.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+// ---------- tokens.md 파싱 ----------
+async function loadTokens() {
+  const res = await fetch('./tokens.md', { cache: 'no-store' });
+  if (!res.ok) throw new Error('tokens.md 로드 실패 (' + res.status + ')');
+  const text = await res.text();
+  const out = [];
+  for (const raw of text.split('\n')) {
+    let line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('<!--')) continue;
+    line = line.replace(/^[-*+]\s*/, '').replace(/[`\[\]()]/g, '').trim();
+    const word = line.split(/\s+/)[0];
+    if (/^[A-Za-z0-9]{1,10}$/.test(word)) {
+      const sym = word.toUpperCase();
+      if (!out.includes(sym)) out.push(sym);
+    }
+  }
+  return out;
+}
+
+// ---------- 테이블 렌더링 ----------
+function buildTable() {
+  const tbody = $('rows');
+  tbody.innerHTML = '';
+  for (const sym of symbols) {
+    const tr = document.createElement('tr');
+    tr.id = 'row-' + sym;
+    tr.innerHTML =
+      '<td>' + sym + ' <span class="sym-quote">/ KRW</span></td>' +
+      '<td id="' + sym + '-upbit" class="none">−</td>' +
+      '<td id="' + sym + '-bithumb" class="none">−</td>' +
+      '<td id="' + sym + '-diff" class="none">−</td>' +
+      '<td id="' + sym + '-pct" class="none premium">−</td>';
+    tbody.appendChild(tr);
+  }
+  // 이미 알고 있는 가격은 즉시 다시 그림 (토큰 목록 변경 시)
+  for (const sym of symbols) {
+    for (const ex of Object.keys(EXCHANGES)) {
+      if (prices[sym] && prices[sym][ex] != null) updateCell(sym + '-' + ex, fmtPrice(prices[sym][ex]), '', 0);
+    }
+    renderDiff(sym);
+  }
+}
+
+function updateCell(id, text, cls, flashDir) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = cls + (id.endsWith('-pct') ? ' premium' : '');
+  if (flashDir) {
+    el.classList.remove('flash-up', 'flash-down');
+    void el.offsetWidth; // 애니메이션 재시작
+    el.classList.add(flashDir > 0 ? 'flash-up' : 'flash-down');
+  }
+}
+
+function renderDiff(sym) {
+  if (!prices[sym]) return;
+  const u = prices[sym].upbit, b = prices[sym].bithumb;
+  if (u == null || b == null) return;
+  const diff = u - b;
+  const pct = (u / b - 1) * 100;
+  const cls = diff > 0 ? 'pos' : (diff < 0 ? 'neg' : '');
+  const d = priceDigits(u); // 차이는 가격대와 같은 자릿수로 표기
+  const diffStr = (diff > 0 ? '+' : '') +
+    diff.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+  updateCell(sym + '-diff', diffStr, cls, 0);
+  updateCell(sym + '-pct', (pct > 0 ? '+' : '') + pct.toFixed(3) + '%', cls, 0);
+}
+
+function onPrice(ex, sym, price) {
+  if (!prices[sym]) return; // 목록에서 빠진 토큰의 늦은 메시지 무시
+  const prev = prices[sym][ex];
+  prices[sym][ex] = price;
+  const dir = prev == null ? 0 : Math.sign(price - prev);
+  updateCell(sym + '-' + ex, fmtPrice(price), '', dir);
+  renderDiff(sym);
+  $('updated').textContent = '마지막 업데이트 ' + new Date().toLocaleTimeString('ko-KR');
+}
+
+// ---------- 거래소별 상장 마켓 필터 ----------
+async function validMarkets(ex, wanted) {
+  if (!marketCache[ex]) {
+    try {
+      const res = await fetch(EXCHANGES[ex].rest + '/market/all', { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.status);
+      const all = await res.json();
+      marketCache[ex] = new Set(all.map((m) => m.market));
+    } catch (e) {
+      console.warn(ex + ' market/all 실패, 전체 코드로 구독 시도:', e);
+      return wanted; // 필터 실패 시 그대로 시도
+    }
+  }
+  return wanted.filter((c) => marketCache[ex].has(c));
+}
+
+// ---------- 연결 관리 ----------
+function stopExchange(ex) {
+  const c = conns[ex];
+  if (!c) return;
+  c.stopped = true;
+  clearTimeout(c.failTimer);
+  clearTimeout(c.reconnectTimer);
+  clearInterval(c.pingTimer);
+  clearInterval(c.pollTimer);
+  if (c.ws) { try { c.ws.close(); } catch {} }
+  conns[ex] = null;
+}
+
+function startExchange(ex, codes) {
+  stopExchange(ex);
+  if (codes.length === 0) { setStatus(ex, 'err', capitalize(ex) + ' (상장 코인 없음)'); return; }
+  const conn = { codes, ws: null, stopped: false,
+                 failTimer: null, reconnectTimer: null, pingTimer: null, pollTimer: null };
+  conns[ex] = conn;
+  connectWS(ex, conn);
+}
+
+// ---------- WebSocket (Upbit 포맷 — Bithumb 2.0 API 동일 포맷) ----------
+function connectWS(ex, conn) {
+  let gotData = false;
+  const ws = new WebSocket(EXCHANGES[ex].ws);
+  conn.ws = ws;
+  ws.binaryType = 'arraybuffer';
+
+  // 8초 내 데이터가 없으면 REST 폴링으로 전환
+  conn.failTimer = setTimeout(() => {
+    if (!gotData && !conn.stopped) {
+      try { ws.onclose = null; ws.close(); } catch {}
+      startPolling(ex, conn);
+    }
+  }, 8000);
+
+  ws.onopen = () => {
+    if (conn.stopped) return;
+    setStatus(ex, 'wait', capitalize(ex) + ' 구독 중…');
+    ws.send(JSON.stringify([
+      { ticket: 'price-diff-viewer' },
+      { type: 'ticker', codes: conn.codes },
+      { format: 'DEFAULT' },
+    ]));
+  };
+
+  ws.onmessage = (ev) => {
+    if (conn.stopped) return;
+    let data;
+    try {
+      data = JSON.parse(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data));
+    } catch { return; }
+    if (data.error) { console.warn(ex + ' WS error:', data.error); return; }
+    if (data.type !== 'ticker' || !data.code) return;
+    if (!gotData) { gotData = true; setStatus(ex, 'ok', capitalize(ex) + ' 실시간'); }
+    onPrice(ex, data.code.replace('KRW-', ''), data.trade_price);
+  };
+
+  ws.onclose = () => {
+    clearTimeout(conn.failTimer);
+    if (conn.stopped) return;
+    setStatus(ex, 'err', capitalize(ex) + ' 재연결 중…');
+    conn.reconnectTimer = setTimeout(() => { if (!conn.stopped) connectWS(ex, conn); }, 3000);
+  };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+
+  // idle 연결 종료 방지
+  clearInterval(conn.pingTimer);
+  conn.pingTimer = setInterval(() => { if (ws.readyState === 1) ws.send('PING'); }, 50000);
+}
+
+// ---------- REST 폴링 폴백 ----------
+function startPolling(ex, conn) {
+  setStatus(ex, 'wait', capitalize(ex) + ' 폴링 전환…');
+  const url = EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(',');
+  const tick = async () => {
+    if (conn.stopped) return;
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.status);
+      const list = await res.json();
+      setStatus(ex, 'ok', capitalize(ex) + ' 폴링(3s)');
+      for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
+    } catch (e) {
+      setStatus(ex, 'err', capitalize(ex) + ' 연결 실패');
+      console.warn(ex + ' polling 실패:', e);
+    }
+  };
+  tick();
+  conn.pollTimer = setInterval(tick, 3000);
+}
+
+function capitalize(s) { return s[0].toUpperCase() + s.slice(1); }
+
+// ---------- 토큰 목록 적용 + 변경 감시 ----------
+let applying = false;
+async function applyTokens(next) {
+  if (applying) return;
+  applying = true;
+  try {
+    symbols = next;
+    for (const k of Object.keys(prices)) if (!next.includes(k)) delete prices[k];
+    for (const s of next) if (!prices[s]) prices[s] = { upbit: null, bithumb: null };
+    buildTable();
+    for (const ex of Object.keys(EXCHANGES)) {
+      const codes = await validMarkets(ex, next.map((s) => 'KRW-' + s));
+      startExchange(ex, codes);
+    }
+  } finally {
+    applying = false;
+  }
+}
+
+function watchTokens() {
+  setInterval(async () => {
+    if (applying) return;
+    let next;
+    try { next = await loadTokens(); } catch { return; } // 일시적 로드 실패는 무시
+    if (next.length === 0) return;
+    if (JSON.stringify(next) !== JSON.stringify(symbols)) {
+      hideError();
+      await applyTokens(next);
+    }
+  }, TOKENS_POLL_MS);
+}
+
+// ---------- 시작 ----------
+(async function main() {
+  let first;
+  try {
+    first = await loadTokens();
+  } catch (e) {
+    showError(e.message + ' — index.html과 같은 위치에 tokens.md가 있어야 합니다. (file:// 로 열면 안 되고 웹서버로 서빙해야 합니다)');
+    watchTokens(); // 파일이 나중에 생기면 자동 복구
+    return;
+  }
+  if (first.length === 0) {
+    showError('tokens.md에서 토큰을 찾지 못했습니다.');
+  } else {
+    await applyTokens(first);
+  }
+  watchTokens();
+})();
+</script>
+</body>
+</html>
