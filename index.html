@@ -102,7 +102,7 @@
   </div>
 
   <footer>
-    실시간: WebSocket (연결 실패 시 3초 REST 폴링 자동 전환) · <code>tokens.md</code> 저장 시 3초 내 자동 반영 (새로고침 불필요)<br>
+    시작 시 REST로 즉시 표시 → WebSocket 연결되면 실시간 전환 (실패 시 3초 REST 폴링 유지) · <code>tokens.md</code> 저장 시 3초 내 자동 반영<br>
     차이(%)가 <span class="pos">+빨강</span>이면 업비트가 더 비싸고, <span class="neg">−파랑</span>이면 빗썸이 더 비쌉니다.
   </footer>
 </div>
@@ -230,18 +230,24 @@ function onPrice(ex, sym, price) {
 }
 
 // ---------- 거래소별 상장 마켓 필터 ----------
+// localStorage 캐시(1일)로 재방문 시 첫 페인트를 앞당김. 갱신은 백그라운드로.
 async function validMarkets(ex, wanted) {
+  const KEY = 'markets:' + ex;
   if (!marketCache[ex]) {
     try {
-      const res = await fetch(EXCHANGES[ex].rest + '/market/all', { cache: 'no-store' });
-      if (!res.ok) throw new Error(res.status);
-      const all = await res.json();
-      marketCache[ex] = new Set(all.map((m) => m.market));
-    } catch (e) {
-      console.warn(ex + ' market/all 실패, 전체 코드로 구독 시도:', e);
-      return wanted; // 필터 실패 시 그대로 시도
-    }
+      const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (saved && Date.now() - saved.t < 86400000) marketCache[ex] = new Set(saved.m);
+    } catch {}
+    const refresh = fetch(EXCHANGES[ex].rest + '/market/all', { cache: 'no-store' })
+      .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then((all) => {
+        marketCache[ex] = new Set(all.map((m) => m.market));
+        try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), m: [...marketCache[ex]] })); } catch {}
+      })
+      .catch((e) => console.warn(ex + ' market/all 실패:', e));
+    if (!marketCache[ex]) await refresh; // 캐시가 없을 때만 네트워크를 기다림
   }
+  if (!marketCache[ex]) return wanted; // 캐시도 네트워크도 실패 → 그대로 시도
   return wanted.filter((c) => marketCache[ex].has(c));
 }
 
@@ -263,11 +269,12 @@ function stopExchange(ex) {
 function startExchange(ex, codes) {
   stopExchange(ex);
   if (codes.length === 0) { setStatus(ex, 'err', capitalize(ex) + ' (상장 코인 없음)'); return; }
-  const conn = { codes, ws: null, stopped: false, polling: false, wsFails: 0,
+  const conn = { codes, ws: null, stopped: false, polling: false, wsFails: 0, wsRetryDelay: 1500,
                  failTimer: null, reconnectTimer: null, pingTimer: null, pollTimer: null, wsRetryTimer: null };
   conns[ex] = conn;
-  connectWS(ex, conn);
-  primeSnapshot(ex, conn);
+  // REST 폴링으로 시작해 가격을 즉시 표시하고, WS는 뒤에서 연결되면 실시간으로 업그레이드.
+  // (업비트는 WS 연결 시도 rate limit이 엄격해서 첫 연결이 거부될 수 있음 — 그동안도 가격은 보여야 함)
+  startPolling(ex, conn);
 }
 
 // ---------- WebSocket (Upbit 포맷 — Bithumb 2.0 API 동일 포맷) ----------
@@ -277,11 +284,12 @@ function connectWS(ex, conn) {
   conn.ws = ws;
   ws.binaryType = 'arraybuffer';
 
-  // 8초 내 데이터가 없으면 REST 폴링으로 전환
+  // 8초 내 데이터가 없으면 포기 (폴링 중이면 다음 재시도 예약, 아니면 폴링 전환)
   conn.failTimer = setTimeout(() => {
     if (!gotData && !conn.stopped) {
       try { ws.onclose = null; ws.close(); } catch {}
-      startPolling(ex, conn);
+      if (conn.polling) scheduleWsRetry(ex, conn);
+      else { conn.wsRetryDelay = 10000; startPolling(ex, conn); }
     }
   }, 8000);
 
@@ -306,7 +314,8 @@ function connectWS(ex, conn) {
     if (!gotData) {
       gotData = true;
       conn.wsFails = 0;
-      if (conn.polling) { // WS 복구 성공 → 폴링 중단하고 실시간 복귀
+      conn.wsRetryDelay = 1500;
+      if (conn.polling) { // WS 연결 성공 → 폴링 중단하고 실시간 전환
         conn.polling = false;
         clearTimeout(conn.pollTimer);
         clearTimeout(conn.wsRetryTimer);
@@ -319,10 +328,10 @@ function connectWS(ex, conn) {
   ws.onclose = () => {
     clearTimeout(conn.failTimer);
     if (conn.stopped) return;
-    if (conn.polling) return; // 폴링 중 백그라운드 WS 복구 시도 실패 → 60초 뒤 재시도
+    if (conn.polling) { scheduleWsRetry(ex, conn); return; } // 폴링 유지, WS는 점점 길게 재시도
     if (!gotData) {
       conn.wsFails++;
-      if (conn.wsFails >= 3) { startPolling(ex, conn); return; } // 연속 실패 → REST 폴링 전환
+      if (conn.wsFails >= 3) { conn.wsRetryDelay = 10000; startPolling(ex, conn); return; } // 연속 실패 → REST 폴링 전환
     } else {
       conn.wsFails = 0;
     }
@@ -337,11 +346,11 @@ function connectWS(ex, conn) {
   conn.pingTimer = setInterval(() => { if (ws.readyState === 1) ws.send('PING'); }, 50000);
 }
 
-// ---------- REST 폴링 폴백 ----------
+// ---------- REST 폴링 (시작 모드이자 WS 실패 시 폴백) ----------
 function startPolling(ex, conn) {
   if (conn.polling || conn.stopped) return;
   conn.polling = true;
-  setStatus(ex, 'wait', capitalize(ex) + ' 폴링 전환…');
+  setStatus(ex, 'wait', capitalize(ex) + ' 연결 중…');
   const url = EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(',');
   let errs = 0;
   const tick = async () => {
@@ -366,24 +375,16 @@ function startPolling(ex, conn) {
   scheduleWsRetry(ex, conn);
 }
 
-// 폴링 중 60초마다 WS 복구 시도 — 데이터 수신에 성공하면 onmessage에서 폴링을 중단
+// 폴링 중 WS 연결을 점점 긴 간격으로 재시도 (1.5s → 3s → … → 최대 60s).
+// 성공해 데이터가 오면 onmessage에서 폴링을 중단하고 실시간으로 전환.
+// 업비트는 WS 연결 시도가 잦으면 429로 거부하므로 간격을 벌리는 것이 오히려 빨리 붙는 길.
 function scheduleWsRetry(ex, conn) {
+  clearTimeout(conn.wsRetryTimer);
   conn.wsRetryTimer = setTimeout(() => {
     if (conn.stopped || !conn.polling) return;
     connectWS(ex, conn);
-    scheduleWsRetry(ex, conn);
-  }, 60000);
-}
-
-// WS 연결을 기다리는 동안 REST 스냅샷으로 가격을 즉시 채움
-async function primeSnapshot(ex, conn) {
-  try {
-    const res = await fetch(EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(','), { cache: 'no-store' });
-    if (!res.ok) return;
-    const list = await res.json();
-    if (conn.stopped) return;
-    for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
-  } catch {}
+  }, conn.wsRetryDelay);
+  conn.wsRetryDelay = Math.min(conn.wsRetryDelay * 2, 60000);
 }
 
 function capitalize(s) { return s[0].toUpperCase() + s.slice(1); }
@@ -398,10 +399,10 @@ async function applyTokens(next) {
     for (const k of Object.keys(prices)) if (!next.includes(k)) delete prices[k];
     for (const s of next) if (!prices[s]) prices[s] = { upbit: null, bithumb: null };
     buildTable();
-    for (const ex of Object.keys(EXCHANGES)) {
+    await Promise.all(Object.keys(EXCHANGES).map(async (ex) => {
       const codes = await validMarkets(ex, next.map((s) => 'KRW-' + s));
       startExchange(ex, codes);
-    }
+    }));
   } finally {
     applying = false;
   }
