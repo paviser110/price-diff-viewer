@@ -1,0 +1,2 @@
+# Cloudflare Worker 프록시 URL을 아래에 한 줄로 넣으면 업비트 REST가 프록시를 경유합니다.
+# 예: https://upbit-proxy.<계정>.workers.dev

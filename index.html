@@ -111,7 +111,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '7';
+const APP_VERSION = '8';
 
 const EXCHANGES = {
   // 업비트는 브라우저 Origin별 rate limit이 빡빡해서 폴링을 더 느리게 (한도에 걸리면 요청을 멈춰야 풀림)
@@ -475,8 +475,20 @@ function watchVersion() {
   }, 30000);
 }
 
+// 선택 설정: proxy.txt에 Cloudflare Worker URL이 있으면 업비트 REST를 프록시로 우회
+// (업비트가 github.io 같은 서드파티 Origin의 브라우저 요청을 차별적으로 제한하는 문제 대응)
+async function loadProxyConfig() {
+  try {
+    const res = await fetch('./proxy.txt', { cache: 'no-store' });
+    if (!res.ok) return;
+    const line = (await res.text()).split('\n').map((s) => s.trim()).find((s) => s.startsWith('https://'));
+    if (line) EXCHANGES.upbit.rest = line.replace(/\/+$/, '') + '/v1';
+  } catch {}
+}
+
 // ---------- 시작 ----------
 (async function main() {
+  await loadProxyConfig();
   let first;
   try {
     first = await loadTokens();
