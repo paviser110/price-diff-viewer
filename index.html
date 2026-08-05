@@ -102,7 +102,7 @@
   </div>
 
   <footer>
-    시작 시 REST로 즉시 표시 → WebSocket 연결되면 실시간 전환 (실패 시 3초 REST 폴링 유지) · <code>tokens.md</code> 저장 시 3초 내 자동 반영<br>
+    시작 시 REST로 즉시 표시 → WebSocket 연결되면 실시간 전환 (실패 시 REST 폴링 유지) · <code>tokens.md</code> 저장 시 3초 내 자동 반영<br>
     차이(%)가 <span class="pos">+빨강</span>이면 업비트가 더 비싸고, <span class="neg">−파랑</span>이면 빗썸이 더 비쌉니다.
   </footer>
 </div>
@@ -111,8 +111,9 @@
 'use strict';
 
 const EXCHANGES = {
-  upbit:   { ws: 'wss://api.upbit.com/websocket/v1',      rest: 'https://api.upbit.com/v1',   el: 'st-upbit' },
-  bithumb: { ws: 'wss://ws-api.bithumb.com/websocket/v1', rest: 'https://api.bithumb.com/v1', el: 'st-bithumb' },
+  // 업비트는 브라우저 Origin별 rate limit이 빡빡해서 폴링을 더 느리게 (한도에 걸리면 요청을 멈춰야 풀림)
+  upbit:   { ws: 'wss://api.upbit.com/websocket/v1',      rest: 'https://api.upbit.com/v1',   el: 'st-upbit',   pollMs: 5000 },
+  bithumb: { ws: 'wss://ws-api.bithumb.com/websocket/v1', rest: 'https://api.bithumb.com/v1', el: 'st-bithumb', pollMs: 3000 },
 };
 
 const TOKENS_POLL_MS = 3000;
@@ -360,7 +361,7 @@ function startPolling(ex, conn) {
       if (!res.ok) throw new Error(res.status);
       const list = await res.json();
       errs = 0;
-      setStatus(ex, 'ok', capitalize(ex) + ' 폴링(3s)');
+      setStatus(ex, 'ok', capitalize(ex) + ' 폴링(' + (EXCHANGES[ex].pollMs / 1000) + 's)');
       for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
     } catch (e) {
       errs++;
@@ -368,8 +369,9 @@ function startPolling(ex, conn) {
       console.warn(ex + ' polling 실패:', e);
     }
     if (conn.stopped || !conn.polling) return;
-    // 실패가 이어지면 폴링 간격을 늘려 rate limit 악화 방지 (최대 30초)
-    conn.pollTimer = setTimeout(tick, Math.min(3000 * (errs + 1), 30000));
+    // 실패가 이어지면 지수 백오프 (최대 60초) — 요청을 멈춰야 rate limit 패널티가 풀림
+    const base = EXCHANGES[ex].pollMs;
+    conn.pollTimer = setTimeout(tick, Math.min(base * Math.pow(2, errs), 60000));
   };
   tick();
   scheduleWsRetry(ex, conn);
