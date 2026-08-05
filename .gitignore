@@ -2,3 +2,5 @@
 .omc/
 .vscode/
 .DS_Store
+.wrangler/
+node_modules/
