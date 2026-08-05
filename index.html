@@ -239,14 +239,15 @@ async function validMarkets(ex, wanted) {
       const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
       if (saved && Date.now() - saved.t < 86400000) marketCache[ex] = new Set(saved.m);
     } catch {}
-    const refresh = fetch(EXCHANGES[ex].rest + '/market/all', { cache: 'no-store' })
+    const refresh = () => fetch(EXCHANGES[ex].rest + '/market/all', { cache: 'no-store' })
       .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then((all) => {
         marketCache[ex] = new Set(all.map((m) => m.market));
         try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), m: [...marketCache[ex]] })); } catch {}
       })
       .catch((e) => console.warn(ex + ' market/all 실패:', e));
-    if (!marketCache[ex]) await refresh; // 캐시가 없을 때만 네트워크를 기다림
+    if (marketCache[ex]) setTimeout(refresh, 30000); // 캐시가 있으면 시작 버스트를 피해 나중에 갱신
+    else await refresh();
   }
   if (!marketCache[ex]) return wanted; // 캐시도 네트워크도 실패 → 그대로 시도
   return wanted.filter((c) => marketCache[ex].has(c));
@@ -270,7 +271,7 @@ function stopExchange(ex) {
 function startExchange(ex, codes) {
   stopExchange(ex);
   if (codes.length === 0) { setStatus(ex, 'err', capitalize(ex) + ' (상장 코인 없음)'); return; }
-  const conn = { codes, ws: null, stopped: false, polling: false, wsFails: 0, wsRetryDelay: 1500,
+  const conn = { codes, ws: null, stopped: false, polling: false, wsFails: 0, wsRetryDelay: 1500, wsArmed: false,
                  failTimer: null, reconnectTimer: null, pingTimer: null, pollTimer: null, wsRetryTimer: null };
   conns[ex] = conn;
   // REST 폴링으로 시작해 가격을 즉시 표시하고, WS는 뒤에서 연결되면 실시간으로 업그레이드.
@@ -351,6 +352,7 @@ function connectWS(ex, conn) {
 function startPolling(ex, conn) {
   if (conn.polling || conn.stopped) return;
   conn.polling = true;
+  conn.wsArmed = false;
   setStatus(ex, 'wait', capitalize(ex) + ' 연결 중…');
   const url = EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(',');
   let errs = 0;
@@ -363,6 +365,8 @@ function startPolling(ex, conn) {
       errs = 0;
       setStatus(ex, 'ok', capitalize(ex) + ' 폴링(' + (EXCHANGES[ex].pollMs / 1000) + 's)');
       for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
+      // REST가 통한다 = rate limit이 풀려 있다 → 그때부터 WS 업그레이드 시도
+      if (!conn.wsArmed) { conn.wsArmed = true; scheduleWsRetry(ex, conn); }
     } catch (e) {
       errs++;
       setStatus(ex, 'err', capitalize(ex) + ' 연결 실패 (재시도 중)');
@@ -374,7 +378,6 @@ function startPolling(ex, conn) {
     conn.pollTimer = setTimeout(tick, Math.min(base * Math.pow(2, errs), 60000));
   };
   tick();
-  scheduleWsRetry(ex, conn);
 }
 
 // 폴링 중 WS 연결을 점점 긴 간격으로 재시도 (1.5s → 3s → … → 최대 60s).
