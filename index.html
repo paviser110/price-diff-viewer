@@ -58,6 +58,7 @@
   .pos { color: var(--up); }
   .neg { color: var(--down); }
   .none { color: var(--muted); }
+  .stale { color: var(--muted); opacity: .55; }
   .premium { font-weight: 700; }
   @keyframes flashUp   { 0% { background: rgba(246,70,93,.18); } 100% { background: transparent; } }
   @keyframes flashDown { 0% { background: rgba(47,124,246,.18); } 100% { background: transparent; } }
@@ -103,12 +104,14 @@
 
   <footer>
     시작 시 REST로 즉시 표시 → WebSocket 연결되면 실시간 전환 (실패 시 REST 폴링 유지) · <code>tokens.md</code> 저장 시 3초 내 자동 반영<br>
-    차이(%)가 <span class="pos">+빨강</span>이면 업비트가 더 비싸고, <span class="neg">−파랑</span>이면 빗썸이 더 비쌉니다.
+    차이(%)가 <span class="pos">+빨강</span>이면 업비트가 더 비싸고, <span class="neg">−파랑</span>이면 빗썸이 더 비쌉니다. <span id="app-ver"></span>
   </footer>
 </div>
 
 <script>
 'use strict';
+
+const APP_VERSION = '7';
 
 const EXCHANGES = {
   // 업비트는 브라우저 Origin별 rate limit이 빡빡해서 폴링을 더 느리게 (한도에 걸리면 요청을 멈춰야 풀림)
@@ -192,6 +195,7 @@ function buildTable() {
     }
     renderDiff(sym);
   }
+  paintStalePrices(); // 아직 비어 있는 칸은 직전 방문 시세로 (흐리게)
 }
 
 function updateCell(id, text, cls, flashDir) {
@@ -220,7 +224,10 @@ function renderDiff(sym) {
   updateCell(sym + '-pct', (pct > 0 ? '+' : '') + pct.toFixed(3) + '%', cls, 0);
 }
 
+let lastSave = 0;
+let anyLive = false;
 function onPrice(ex, sym, price) {
+  anyLive = true;
   if (!prices[sym]) return; // 목록에서 빠진 토큰의 늦은 메시지 무시
   const prev = prices[sym][ex];
   prices[sym][ex] = price;
@@ -228,6 +235,36 @@ function onPrice(ex, sym, price) {
   updateCell(sym + '-' + ex, fmtPrice(price), '', dir);
   renderDiff(sym);
   $('updated').textContent = '마지막 업데이트 ' + new Date().toLocaleTimeString('ko-KR');
+  // 다음 방문 때 연결 전에 보여줄 마지막 시세 저장 (5초 스로틀)
+  const now = Date.now();
+  if (now - lastSave > 5000) {
+    lastSave = now;
+    try { localStorage.setItem('lastPrices', JSON.stringify({ t: now, prices })); } catch {}
+  }
+}
+
+// 직전 방문에서 저장한 시세를 연결되기 전까지 흐리게 표시 (1시간 이내 저장본만)
+function paintStalePrices() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem('lastPrices') || 'null'); } catch { return; }
+  if (!saved || Date.now() - saved.t > 3600000) return;
+  let painted = false;
+  for (const sym of symbols) {
+    const p = saved.prices[sym];
+    if (!p) continue;
+    for (const ex of Object.keys(EXCHANGES)) {
+      const el = $(sym + '-' + ex);
+      if (p[ex] != null && el && el.textContent === '−') {
+        el.textContent = fmtPrice(p[ex]);
+        el.className = 'stale';
+        painted = true;
+      }
+    }
+  }
+  if (painted && !anyLive) {
+    $('updated').textContent = '이전 시세 표시 중 (' +
+      new Date(saved.t).toLocaleTimeString('ko-KR') + ' 저장) — 연결되면 갱신됩니다';
+  }
 }
 
 // ---------- 거래소별 상장 마켓 필터 ----------
@@ -426,6 +463,18 @@ function watchTokens() {
   }, TOKENS_POLL_MS);
 }
 
+// 새 버전이 배포되면 캐시를 우회해 자동 리로드 (구버전 캐시에 갇히지 않도록)
+function watchVersion() {
+  setInterval(async () => {
+    try {
+      const res = await fetch('./version.txt', { cache: 'no-store' });
+      if (!res.ok) return;
+      const v = (await res.text()).trim();
+      if (v && v !== APP_VERSION) location.replace(location.pathname + '?u=' + v);
+    } catch {}
+  }, 30000);
+}
+
 // ---------- 시작 ----------
 (async function main() {
   let first;
@@ -441,7 +490,10 @@ function watchTokens() {
   } else {
     await applyTokens(first);
   }
+  const verEl = $('app-ver');
+  if (verEl) verEl.textContent = 'v' + APP_VERSION;
   watchTokens();
+  watchVersion();
 })();
 </script>
 </body>
