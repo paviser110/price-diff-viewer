@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Upbit ↔ Bithumb 가격 비교</title>
+<title>Upbit ↔ Bithumb 호가 갭</title>
 <style>
   :root {
     --bg: #0f1115;
@@ -14,6 +14,7 @@
     --up: #f6465d;    /* 한국 관례: 빨강 = 상승/플러스 */
     --down: #2f7cf6;  /* 파랑 = 하락/마이너스 */
     --accent: #f0b90b;
+    --good: #2ecc71;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -23,10 +24,9 @@
     min-height: 100vh;
     padding: 24px 16px;
   }
-  .wrap { max-width: 860px; margin: 0 auto; }
-  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .wrap { max-width: 1300px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   h1 { font-size: 20px; font-weight: 700; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
   .status-bar { display: flex; gap: 8px; margin: 12px 0 16px; flex-wrap: wrap; align-items: center; }
   .pill {
     font-size: 12px; padding: 3px 10px; border-radius: 999px;
@@ -34,38 +34,59 @@
     display: inline-flex; align-items: center; gap: 6px;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #555; }
-  .pill.ok .dot { background: #2ecc71; }
+  .pill.ok .dot { background: var(--good); }
   .pill.err .dot { background: var(--up); }
   .pill.wait .dot { background: var(--accent); }
+  .size-ctl { color: var(--text); }
+  .size-ctl input {
+    width: 64px; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 6px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums;
+  }
   #updated { margin-left: auto; font-size: 12px; color: var(--muted); }
+  /* 열 폭 고정: 값 길이가 바뀌어도 레이아웃이 흔들리지 않게 */
   table {
-    width: 100%; border-collapse: collapse;
+    width: 100%; min-width: 1248px; table-layout: fixed; border-collapse: collapse;
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     overflow: hidden; font-variant-numeric: tabular-nums;
   }
   thead th {
     font-size: 12px; font-weight: 600; color: var(--muted); text-align: right;
-    padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+    padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: bottom;
   }
-  thead th:first-child { text-align: left; }
+  thead th.tok { text-align: left; }
+  thead th.grp { text-align: center; color: var(--text); border-bottom: none; padding-bottom: 2px; }
+  thead th.grp-l { border-left: 1px solid var(--border); }
   tbody td {
-    padding: 11px 14px; text-align: right; font-size: 14px;
-    border-bottom: 1px solid var(--border); white-space: nowrap;
+    padding: 9px 10px; text-align: right; font-size: 14px;
+    border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden;
   }
   tbody tr:last-child td { border-bottom: none; }
   tbody td:first-child { text-align: left; font-weight: 700; }
-  .sym-quote { color: var(--muted); font-weight: 400; font-size: 12px; }
+  /* 그룹 경계 (빗썸 / 업비트 / 빗썸→업비트 / 업비트→빗썸) */
+  tbody td:nth-child(2), tbody td:nth-child(4), tbody td:nth-child(6), tbody td:nth-child(11) { border-left: 1px solid var(--border); }
   .pos { color: var(--up); }
   .neg { color: var(--down); }
   .none { color: var(--muted); }
   .stale { color: var(--muted); opacity: .55; }
-  .premium { font-weight: 700; }
+  td.gap { font-weight: 700; cursor: help; }
+  td.sub { font-size: 13px; cursor: help; }
+  td.sub.dim { opacity: .55; }
+  td.sig-good { background: rgba(46,204,113,.09); }
+  .bad-text { color: var(--up); }
+  td.profit { font-weight: 700; }
+  .hdot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #555;
+    margin-right: 6px; vertical-align: middle; position: relative; top: -1px;
+  }
+  .hdot.good { background: var(--good); }
+  .hdot.warn { background: var(--accent); }
+  .hdot.bad  { background: var(--up); }
   @keyframes flashUp   { 0% { background: rgba(246,70,93,.18); } 100% { background: transparent; } }
   @keyframes flashDown { 0% { background: rgba(47,124,246,.18); } 100% { background: transparent; } }
   td.flash-up   { animation: flashUp .6s ease-out; }
   td.flash-down { animation: flashDown .6s ease-out; }
   .table-scroll { overflow-x: auto; }
-  footer { margin-top: 14px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  footer { margin-top: 10px; font-size: 11px; color: var(--muted); opacity: .6; text-align: right; }
   #error-box {
     display: none; margin: 12px 0; padding: 10px 14px; font-size: 13px;
     border: 1px solid var(--up); border-radius: 8px; color: var(--up); background: rgba(246,70,93,.06);
@@ -75,13 +96,14 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Upbit ↔ Bithumb 가격 비교</h1>
+    <h1>Upbit ↔ Bithumb 호가 갭</h1>
   </header>
-  <div class="sub">tokens.md에 나열된 토큰의 KRW 마켓 실시간 시세 · 차이 = 업비트 − 빗썸</div>
 
   <div class="status-bar">
     <span class="pill wait" id="st-upbit"><span class="dot"></span>Upbit</span>
     <span class="pill wait" id="st-bithumb"><span class="dot"></span>Bithumb</span>
+    <label class="pill size-ctl" title="업비트에서 시장가로 체결할 금액. 이 금액 기준으로 잔량/슬리피지를 계산합니다.">체결 규모 <input id="take-size" type="number" min="1" step="10" inputmode="numeric"> 만원</label>
+    <label class="pill size-ctl" title="양쪽 수수료 합(bp). 슬리피지 차감 실효 갭이 이 값 이상이면 초록.">수수료 <input id="fee-bp" type="number" min="0" step="1" inputmode="numeric"> bp</label>
     <span id="updated"></span>
   </div>
 
@@ -89,43 +111,62 @@
 
   <div class="table-scroll">
     <table>
+      <colgroup>
+        <col style="width:72px">
+        <col style="width:98px"><col style="width:98px">
+        <col style="width:98px"><col style="width:98px">
+        <col style="width:88px"><col style="width:68px"><col style="width:72px"><col style="width:80px"><col style="width:84px">
+        <col style="width:88px"><col style="width:68px"><col style="width:72px"><col style="width:80px"><col style="width:84px">
+      </colgroup>
       <thead>
         <tr>
-          <th>토큰</th>
-          <th>업비트 (KRW)</th>
-          <th>빗썸 (KRW)</th>
-          <th>차이 (KRW)</th>
-          <th>차이 (%)</th>
+          <th class="tok" rowspan="2">토큰</th>
+          <th class="grp grp-l" colspan="2">빗썸</th>
+          <th class="grp grp-l" colspan="2">업비트</th>
+          <th class="grp grp-l" colspan="5">빗썸 → 업비트</th>
+          <th class="grp grp-l" colspan="5">업비트 → 빗썸</th>
+        </tr>
+        <tr>
+          <th class="grp-l">bid</th><th>ask</th>
+          <th class="grp-l">bid</th><th>ask</th>
+          <th class="grp-l">갭</th><th>슬립</th><th>잔량</th><th>최대</th><th>수익</th>
+          <th class="grp-l">갭</th><th>슬립</th><th>잔량</th><th>최대</th><th>수익</th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
 
-  <footer>
-    시작 시 REST로 즉시 표시 → WebSocket 연결되면 실시간 전환 (실패 시 REST 폴링 유지) · <code>tokens.md</code> 저장 시 3초 내 자동 반영<br>
-    차이(%)가 <span class="pos">+빨강</span>이면 업비트가 더 비싸고, <span class="neg">−파랑</span>이면 빗썸이 더 비쌉니다. <span id="app-ver"></span>
-  </footer>
+  <footer><span id="app-ver"></span></footer>
 </div>
 
 <script>
 'use strict';
 
-const APP_VERSION = '9';
+const APP_VERSION = '17';
+const UPBIT_DIRECT_REST = 'https://api.upbit.com/v1';
 
 const EXCHANGES = {
   // 업비트는 브라우저 Origin별 rate limit이 빡빡해서 폴링을 더 느리게 (한도에 걸리면 요청을 멈춰야 풀림)
-  upbit:   { ws: 'wss://api.upbit.com/websocket/v1',      rest: 'https://api.upbit.com/v1',   el: 'st-upbit',   pollMs: 5000 },
+  upbit:   { ws: 'wss://api.upbit.com/websocket/v1',      rest: UPBIT_DIRECT_REST,             el: 'st-upbit',   pollMs: 5000 },
   bithumb: { ws: 'wss://ws-api.bithumb.com/websocket/v1', rest: 'https://api.bithumb.com/v1', el: 'st-bithumb', pollMs: 3000 },
 };
 
 const TOKENS_POLL_MS = 3000;
+const DEFAULT_TAKE_MAN = 100;    // 업비트 체결 규모 기본값 (만원)
+const DEFAULT_FEE_BP = 10;       // 양쪽 수수료 합 기본값 (bp) — 빗썸 5bp + 업비트 5bp
+const MAX_LEVELS_GOOD = 2;       // 초록은 다음 호가(2호가)까지로 전량 체결될 때만
 
-// prices[symbol] = { upbit: number|null, bithumb: number|null }
-const prices = {};
+// books[symbol] = { upbit: Book|null, bithumb: Book|null }
+// Book = { bid, ask, bids: [[price, size], ...] (높은 가격순), asks: [[price, size], ...] (낮은 가격순), t }
+const books = {};
 let symbols = [];
+let takeSizeKrw = DEFAULT_TAKE_MAN * 10000;
+let feeBp = DEFAULT_FEE_BP;
+const feePct = () => feeBp / 100;
 const conns = { upbit: null, bithumb: null };  // 거래소별 연결 핸들
 const marketCache = { upbit: null, bithumb: null }; // market/all 결과 캐시 (Set)
+const shown = {}; // 가격 셀별 마지막 표시 값 (변동 방향 플래시용)
 
 const $ = (id) => document.getElementById(id);
 
@@ -148,10 +189,50 @@ function priceDigits(v) {
   if (v < 1000) return 1;
   return 0;
 }
-function fmtPrice(v) {
+function fmtPrice(v, extra) {
   if (v == null) return '−';
-  const d = priceDigits(v);
+  const d = priceDigits(v) + (extra || 0);
   return v.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function fmtPct(p) { return (p > 0 ? '+' : (p < 0 ? '−' : '')) + Math.abs(p).toFixed(3) + '%'; }
+function pctCls(p) { return p > 0 ? 'pos' : (p < 0 ? 'neg' : ''); }
+// 원화 금액을 만/억 단위로 짧게
+function fmtKrwShort(v) {
+  if (v >= 1e8) return (v / 1e8).toFixed(v >= 1e9 ? 0 : 1) + '억';
+  if (v >= 1e5) return Math.round(v / 1e4).toLocaleString('ko-KR') + '만';
+  if (v >= 1e4) return (v / 1e4).toFixed(1) + '만';
+  return Math.round(v).toLocaleString('ko-KR');
+}
+
+// ---------- 업비트 체결 규모 입력 ----------
+function initTakeSize() {
+  try {
+    const v = Number(localStorage.getItem('takeSizeMan'));
+    if (v > 0) takeSizeKrw = v * 10000;
+  } catch {}
+  const inp = $('take-size');
+  inp.value = Math.round(takeSizeKrw / 10000);
+  inp.addEventListener('change', () => {
+    const v = Number(inp.value);
+    if (!(v > 0)) { inp.value = Math.round(takeSizeKrw / 10000); return; }
+    takeSizeKrw = v * 10000;
+    try { localStorage.setItem('takeSizeMan', String(v)); } catch {}
+    for (const s of symbols) markDirty(s);
+  });
+
+  try {
+    const p = localStorage.getItem('feeBp');
+    if (p !== null && Number(p) >= 0) feeBp = Number(p);
+  } catch {}
+  const fin = $('fee-bp');
+  fin.value = feeBp;
+  fin.addEventListener('change', () => {
+    const v = Number(fin.value);
+    if (!(v >= 0)) { fin.value = feeBp; return; }
+    feeBp = v;
+    try { localStorage.setItem('feeBp', String(v)); } catch {}
+    for (const s of symbols) markDirty(s);
+  });
 }
 
 // ---------- tokens.md 파싱 ----------
@@ -173,6 +254,118 @@ async function loadTokens() {
   return out;
 }
 
+// ---------- 호가 파싱 / 테이킹 시뮬레이션 ----------
+// Upbit/Bithumb 공통 orderbook_units → Book. 최우선 호가가 앞에 오도록 정렬.
+function parseBook(units) {
+  const bids = [], asks = [];
+  for (const u of units) {
+    if (u.bid_price > 0 && u.bid_size > 0) bids.push([u.bid_price, u.bid_size]);
+    if (u.ask_price > 0 && u.ask_size > 0) asks.push([u.ask_price, u.ask_size]);
+  }
+  if (!bids.length || !asks.length) return null;
+  bids.sort((a, b) => b[0] - a[0]);
+  asks.sort((a, b) => a[0] - b[0]);
+  return { bid: bids[0][0], ask: asks[0][0], bids, asks, t: Date.now() };
+}
+
+// levels: [[price, size], ...] 유리한 가격순. notional(KRW)만큼 시장가로 먹었을 때의 체결 시뮬레이션.
+function simulateTake(levels, notional) {
+  if (!levels.length) return null;
+  let remain = notional, cost = 0, qty = 0, used = 0, depth = 0;
+  for (const [p, s] of levels) {
+    const lvl = p * s;
+    depth += lvl;
+    if (remain > 0) {
+      used++;
+      if (lvl >= remain) { qty += remain / p; cost += remain; remain = 0; }
+      else { qty += s; cost += lvl; remain -= lvl; }
+    }
+  }
+  return {
+    vwap: cost / qty,                 // 평균 체결가
+    short: remain,                    // 호가가 모자라 못 채운 금액 (0이면 전량 체결 가능)
+    used,                             // 소진한 호가 단수
+    bestKrw: levels[0][0] * levels[0][1], // 1호가 잔량 (KRW)
+    next: levels[1] ? levels[1][0] : null, // 다음 호가
+    depthKrw: depth,                  // 받은 호가 전체 깊이 (KRW)
+  };
+}
+
+// 최대 실행 가능 아비트리지: 업비트 호가를 유리한 순서로 훑으며, 수수료(양쪽 절반씩) 차감 후에도 단위당 이익이 남는
+// 호가까지 전부 먹는다고 가정. 빗썸 쪽은 지정가(메이커)라 같은 수량이 체결된다고 봄.
+// levels: 업비트 [[price, size], ...] 유리한 순서 · makerPx: 빗썸 지정가 · sell: true면 업비트에서 매도(A), false면 매수(B)
+function maxArb(levels, makerPx, sell) {
+  const f = feeBp / 2 / 10000; // 한쪽 수수료 비율
+  let notional = 0, profit = 0, used = 0;
+  for (const [p, q] of levels) {
+    const perUnit = sell ? p * (1 - f) - makerPx * (1 + f) : makerPx * (1 - f) - p * (1 + f);
+    if (perUnit <= 0) break;
+    notional += p * q; // 업비트 쪽 체결 금액
+    profit += perUnit * q;
+    used++;
+  }
+  return { notional, profit, used, exhausted: used > 0 && used === levels.length };
+}
+
+// 방향 A: 빗썸 best bid에 매수 지정가(메이커) → 업비트 bid 쪽으로 시장가 매도(테이커)
+function dirA(u, b) {
+  const sim = simulateTake(u.bids, takeSizeKrw);
+  return {
+    max: maxArb(u.bids, b.bid, true),
+    label: '빗썸 매수(메이커) → 업비트 매도(테이커)', verb: '매도',
+    maker: b.bid, taker: u.bid,
+    gross: (u.bid / b.bid - 1) * 100,
+    sim,
+    slip: sim ? Math.max(0, (u.bid - sim.vwap) / u.bid * 100) : null,
+    net: sim ? (sim.vwap / b.bid - 1) * 100 : null,
+  };
+}
+// 방향 B: 빗썸 best ask에 매도 지정가(메이커) → 업비트 ask 쪽으로 시장가 매수(테이커)
+function dirB(u, b) {
+  const sim = simulateTake(u.asks, takeSizeKrw);
+  return {
+    max: maxArb(u.asks, b.ask, false),
+    label: '빗썸 매도(메이커) → 업비트 매수(테이커)', verb: '매수',
+    maker: b.ask, taker: u.ask,
+    gross: (b.ask / u.ask - 1) * 100,
+    sim,
+    slip: sim ? Math.max(0, (sim.vwap - u.ask) / u.ask * 100) : null,
+    net: sim ? (b.ask / sim.vwap - 1) * 100 : null,
+  };
+}
+
+// 방향별 신호등 (가격 + 유동성):
+//   bad(빨강)  — 슬리피지 반영 실효 갭이 0 이하이거나, 체결 규모만큼 호가가 없음
+//   warn(노랑) — 실효 갭은 플러스지만 수수료 합 미만이거나, 다음 호가(2호가)를 넘어 3호가 이상 먹어야 함
+//   good(초록) — 다음 호가까지로 전량 체결되고, 슬리피지 차감 실효 갭이 양쪽 수수료 합 이상 (= 수수료 내고도 수익)
+function signal(d) {
+  const s = d.sim;
+  if (!s || s.short > 0 || d.net <= 0) return 'bad';
+  if (d.net < feePct() || s.used > MAX_LEVELS_GOOD) return 'warn';
+  return 'good';
+}
+
+function tooltip(d) {
+  const s = d.sim;
+  const lines = [
+    d.label,
+    '빗썸 ' + fmtPrice(d.maker) + ' (메이커) vs 업비트 ' + fmtPrice(d.taker) + ' (테이커) → 갭 ' + fmtPct(d.gross),
+  ];
+  if (s) {
+    lines.push('업비트 1호가 잔량 ' + fmtKrwShort(s.bestKrw) + '원' + (s.next != null ? ' · 다음 호가 ' + fmtPrice(s.next) : ''));
+    lines.push(fmtKrwShort(takeSizeKrw) + '원 ' + d.verb + ' 시 VWAP ' + fmtPrice(s.vwap, 2) +
+      ' · 슬리피지 ' + d.slip.toFixed(3) + '% · ' + s.used + '호가 소진' +
+      (s.short > 0 ? ' · 부족 ' + fmtKrwShort(s.short) + '원 (호가 합 ' + fmtKrwShort(s.depthKrw) + '원)' : ''));
+    lines.push('슬리피지 반영 실효 갭 ' + fmtPct(d.net) + ' · 수수료 ' + feeBp + 'bp 차감 후 ' + fmtPct(d.net - feePct()));
+  }
+  const m = d.max;
+  lines.push(m.used
+    ? '최대 ' + fmtKrwShort(m.notional) + '원' + (m.exhausted ? '+(받은 호가 전부)' : '') + ' 실행 시 예상 수익 ' +
+      fmtKrwShort(m.profit) + '원 (' + m.used + '호가, 수수료 차감)'
+    : '수수료 차감 후 이익 나는 호가 없음');
+  return lines.join('\n');
+}
+
 // ---------- 테이블 렌더링 ----------
 function buildTable() {
   const tbody = $('rows');
@@ -180,29 +373,24 @@ function buildTable() {
   for (const sym of symbols) {
     const tr = document.createElement('tr');
     tr.id = 'row-' + sym;
-    tr.innerHTML =
-      '<td>' + sym + ' <span class="sym-quote">/ KRW</span></td>' +
-      '<td id="' + sym + '-upbit" class="none">−</td>' +
-      '<td id="' + sym + '-bithumb" class="none">−</td>' +
-      '<td id="' + sym + '-diff" class="none">−</td>' +
-      '<td id="' + sym + '-pct" class="none premium">−</td>';
+    const cell = (id) => '<td id="' + sym + '-' + id + '" class="none">−</td>';
+    tr.innerHTML = '<td>' + sym + '</td>' +
+      cell('bithumb-bid') + cell('bithumb-ask') + cell('upbit-bid') + cell('upbit-ask') +
+      cell('a-gap') + cell('a-slip') + cell('a-depth') + cell('a-max') + cell('a-profit') +
+      cell('b-gap') + cell('b-slip') + cell('b-depth') + cell('b-max') + cell('b-profit');
     tbody.appendChild(tr);
   }
-  // 이미 알고 있는 가격은 즉시 다시 그림 (토큰 목록 변경 시)
-  for (const sym of symbols) {
-    for (const ex of Object.keys(EXCHANGES)) {
-      if (prices[sym] && prices[sym][ex] != null) updateCell(sym + '-' + ex, fmtPrice(prices[sym][ex]), '', 0);
-    }
-    renderDiff(sym);
-  }
-  paintStalePrices(); // 아직 비어 있는 칸은 직전 방문 시세로 (흐리게)
+  for (const k of Object.keys(shown)) delete shown[k];
+  // 이미 알고 있는 호가는 즉시 다시 그림 (토큰 목록 변경 시)
+  for (const sym of symbols) renderRow(sym);
+  paintStalePrices(); // 아직 비어 있는 칸은 직전 방문 호가로 (흐리게)
 }
 
 function updateCell(id, text, cls, flashDir) {
   const el = $(id);
   if (!el) return;
   el.textContent = text;
-  el.className = cls + (id.endsWith('-pct') ? ' premium' : '');
+  el.className = cls;
   if (flashDir) {
     el.classList.remove('flash-up', 'flash-down');
     void el.offsetWidth; // 애니메이션 재시작
@@ -210,59 +398,108 @@ function updateCell(id, text, cls, flashDir) {
   }
 }
 
-function renderDiff(sym) {
-  if (!prices[sym]) return;
-  const u = prices[sym].upbit, b = prices[sym].bithumb;
-  if (u == null || b == null) return;
-  const diff = u - b;
-  const pct = (u / b - 1) * 100;
-  const cls = diff > 0 ? 'pos' : (diff < 0 ? 'neg' : '');
-  const d = priceDigits(u); // 차이는 가격대와 같은 자릿수로 표기
-  const diffStr = (diff > 0 ? '+' : '') +
-    diff.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
-  updateCell(sym + '-diff', diffStr, cls, 0);
-  updateCell(sym + '-pct', (pct > 0 ? '+' : '') + pct.toFixed(3) + '%', cls, 0);
+function renderPrice(id, v) {
+  const prev = shown[id];
+  if (prev === v) return;
+  shown[id] = v;
+  updateCell(id, fmtPrice(v), '', prev == null ? 0 : Math.sign(v - prev));
+}
+
+// 내용이 실제로 바뀐 셀만 DOM을 건드림 (호가 스트림마다 전부 다시 그리지 않도록)
+function setCell(id, html, cls, title) {
+  const el = $(id);
+  if (!el) return;
+  const key = html + '|' + cls;
+  if (shown[id] !== key) { shown[id] = key; el.innerHTML = html; el.className = cls; }
+  el.title = title;
+}
+
+// 방향별 5칸: 갭(신호등 점 포함) / 슬립 / 업비트 1호가 잔량 / 최대 실행 규모 / 그때 예상 수익.
+// 초록 방향은 연한 초록 띠, 수수료 차감 후 이익 나는 호가가 하나도 없는 방향은 보조 칸을 흐리게.
+function renderDir(sym, key, d) {
+  const s = d.sim, m = d.max, tip = tooltip(d), sig = signal(d);
+  const band = sig === 'good' ? ' sig-good' : (m.used === 0 ? ' dim' : '');
+  const sub = 'sub' + band;
+  setCell(sym + '-' + key + '-gap', '<span class="hdot ' + sig + '"></span>' + fmtPct(d.gross), 'gap ' + pctCls(d.gross) + band, tip);
+  setCell(sym + '-' + key + '-slip', !s ? '−' : (s.short > 0 ? '부족' : d.slip.toFixed(3) + '%'), sub + (s && s.short > 0 ? ' bad-text' : ''), tip);
+  setCell(sym + '-' + key + '-depth', s ? fmtKrwShort(s.bestKrw) : '−', sub, tip);
+  setCell(sym + '-' + key + '-max', m.used ? fmtKrwShort(m.notional) + (m.exhausted ? '+' : '') : '−', sub, tip);
+  setCell(sym + '-' + key + '-profit', m.used ? '+' + fmtKrwShort(m.profit) : '−', sub + (m.used ? ' profit' : ''), tip);
+}
+
+function renderRow(sym) {
+  const bk = books[sym];
+  if (!bk) return;
+  for (const ex of Object.keys(EXCHANGES)) {
+    const b = bk[ex];
+    if (!b) continue;
+    renderPrice(sym + '-' + ex + '-bid', b.bid);
+    renderPrice(sym + '-' + ex + '-ask', b.ask);
+  }
+  if (!bk.upbit || !bk.bithumb) return;
+  renderDir(sym, 'a', dirA(bk.upbit, bk.bithumb));
+  renderDir(sym, 'b', dirB(bk.upbit, bk.bithumb));
+}
+
+// 호가 스트림은 초당 수십 건이라 프레임 단위로 모아서 그림
+const dirty = new Set();
+let rafId = 0;
+function markDirty(sym) {
+  dirty.add(sym);
+  if (!rafId) rafId = requestAnimationFrame(flush);
+}
+function flush() {
+  rafId = 0;
+  for (const s of dirty) renderRow(s);
+  dirty.clear();
+  if (anyLive) $('updated').textContent = '마지막 업데이트 ' + new Date().toLocaleTimeString('ko-KR');
 }
 
 let lastSave = 0;
 let anyLive = false;
-function onPrice(ex, sym, price) {
+function onBook(ex, sym, book) {
+  if (!books[sym] || !book) return; // 목록에서 빠진 토큰의 늦은 메시지 무시
   anyLive = true;
-  if (!prices[sym]) return; // 목록에서 빠진 토큰의 늦은 메시지 무시
-  const prev = prices[sym][ex];
-  prices[sym][ex] = price;
-  const dir = prev == null ? 0 : Math.sign(price - prev);
-  updateCell(sym + '-' + ex, fmtPrice(price), '', dir);
-  renderDiff(sym);
-  $('updated').textContent = '마지막 업데이트 ' + new Date().toLocaleTimeString('ko-KR');
-  // 다음 방문 때 연결 전에 보여줄 마지막 시세 저장 (5초 스로틀)
+  books[sym][ex] = book;
+  markDirty(sym);
+  // 다음 방문 때 연결 전에 보여줄 마지막 호가 저장 (5초 스로틀, best bid/ask만)
   const now = Date.now();
   if (now - lastSave > 5000) {
     lastSave = now;
-    try { localStorage.setItem('lastPrices', JSON.stringify({ t: now, prices })); } catch {}
+    const slim = {};
+    for (const s of symbols) {
+      const bk = books[s];
+      if (!bk) continue;
+      slim[s] = {};
+      for (const e of Object.keys(EXCHANGES)) if (bk[e]) slim[s][e] = { bid: bk[e].bid, ask: bk[e].ask };
+    }
+    try { localStorage.setItem('lastBooks', JSON.stringify({ t: now, books: slim })); } catch {}
   }
 }
 
-// 직전 방문에서 저장한 시세를 연결되기 전까지 흐리게 표시 (1시간 이내 저장본만)
+// 직전 방문에서 저장한 호가를 연결되기 전까지 흐리게 표시 (1시간 이내 저장본만)
 function paintStalePrices() {
   let saved;
-  try { saved = JSON.parse(localStorage.getItem('lastPrices') || 'null'); } catch { return; }
+  try { saved = JSON.parse(localStorage.getItem('lastBooks') || 'null'); } catch { return; }
   if (!saved || Date.now() - saved.t > 3600000) return;
   let painted = false;
   for (const sym of symbols) {
-    const p = saved.prices[sym];
+    const p = saved.books[sym];
     if (!p) continue;
     for (const ex of Object.keys(EXCHANGES)) {
-      const el = $(sym + '-' + ex);
-      if (p[ex] != null && el && el.textContent === '−') {
-        el.textContent = fmtPrice(p[ex]);
-        el.className = 'stale';
-        painted = true;
+      if (!p[ex]) continue;
+      for (const side of ['bid', 'ask']) {
+        const el = $(sym + '-' + ex + '-' + side);
+        if (p[ex][side] != null && el && el.textContent === '−') {
+          el.textContent = fmtPrice(p[ex][side]);
+          el.className = 'stale';
+          painted = true;
+        }
       }
     }
   }
   if (painted && !anyLive) {
-    $('updated').textContent = '이전 시세 표시 중 (' +
+    $('updated').textContent = '이전 호가 표시 중 (' +
       new Date(saved.t).toLocaleTimeString('ko-KR') + ' 저장) — 연결되면 갱신됩니다';
   }
 }
@@ -311,8 +548,8 @@ function startExchange(ex, codes) {
   const conn = { codes, ws: null, stopped: false, polling: false, wsFails: 0, wsRetryDelay: 1500, wsArmed: false,
                  failTimer: null, reconnectTimer: null, pingTimer: null, pollTimer: null, wsRetryTimer: null };
   conns[ex] = conn;
-  // REST 폴링으로 시작해 가격을 즉시 표시하고, WS는 뒤에서 연결되면 실시간으로 업그레이드.
-  // (업비트는 WS 연결 시도 rate limit이 엄격해서 첫 연결이 거부될 수 있음 — 그동안도 가격은 보여야 함)
+  // REST 폴링으로 시작해 호가를 즉시 표시하고, WS는 뒤에서 연결되면 실시간으로 업그레이드.
+  // (업비트는 WS 연결 시도 rate limit이 엄격해서 첫 연결이 거부될 수 있음 — 그동안도 호가는 보여야 함)
   startPolling(ex, conn);
 }
 
@@ -337,7 +574,7 @@ function connectWS(ex, conn) {
     if (!conn.polling) setStatus(ex, 'wait', capitalize(ex) + ' 구독 중…');
     ws.send(JSON.stringify([
       { ticket: 'price-diff-viewer' },
-      { type: 'ticker', codes: conn.codes },
+      { type: 'orderbook', codes: conn.codes },
       { format: 'DEFAULT' },
     ]));
   };
@@ -349,7 +586,7 @@ function connectWS(ex, conn) {
       data = JSON.parse(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data));
     } catch { return; }
     if (data.error) { console.warn(ex + ' WS error:', data.error); return; }
-    if (data.type !== 'ticker' || !data.code) return;
+    if (data.type !== 'orderbook' || !data.code || !Array.isArray(data.orderbook_units)) return;
     if (!gotData) {
       gotData = true;
       conn.wsFails = 0;
@@ -361,7 +598,7 @@ function connectWS(ex, conn) {
       }
       setStatus(ex, 'ok', capitalize(ex) + ' 실시간');
     }
-    onPrice(ex, data.code.replace('KRW-', ''), data.trade_price);
+    onBook(ex, data.code.replace('KRW-', ''), parseBook(data.orderbook_units));
   };
 
   ws.onclose = () => {
@@ -391,20 +628,20 @@ function startPolling(ex, conn) {
   conn.polling = true;
   conn.wsArmed = false;
   setStatus(ex, 'wait', capitalize(ex) + ' 연결 중…');
-  const url = EXCHANGES[ex].rest + '/ticker?markets=' + conn.codes.join(',');
   let errs = 0;
   const tick = async () => {
     if (conn.stopped || !conn.polling) return;
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(EXCHANGES[ex].rest + '/orderbook?markets=' + conn.codes.join(','), { cache: 'no-store' });
       if (!res.ok) throw new Error(res.status);
       const list = await res.json();
       errs = 0;
       setStatus(ex, 'ok', capitalize(ex) + ' 폴링(' + (EXCHANGES[ex].pollMs / 1000) + 's)');
-      for (const t of list) onPrice(ex, t.market.replace('KRW-', ''), t.trade_price);
+      for (const t of list) if (t.market) onBook(ex, t.market.replace('KRW-', ''), parseBook(t.orderbook_units || []));
       // REST가 통한다 = rate limit이 풀려 있다 → 그때부터 WS 업그레이드 시도
       if (!conn.wsArmed) { conn.wsArmed = true; scheduleWsRetry(ex, conn); }
     } catch (e) {
+      if (await shouldBypassProxy(ex, conn)) return tick(); // 구버전 프록시 → 직접 호출로 즉시 재시도
       errs++;
       setStatus(ex, 'err', capitalize(ex) + ' 연결 실패 (재시도 중)');
       console.warn(ex + ' polling 실패:', e);
@@ -415,6 +652,19 @@ function startPolling(ex, conn) {
     conn.pollTimer = setTimeout(tick, Math.min(base * Math.pow(2, errs), 60000));
   };
   tick();
+}
+
+// 구버전 프록시 워커는 /v1/orderbook을 허용하지 않아 CORS 헤더 없는 404를 돌려주고, 브라우저에선 fetch 자체가 실패한다.
+// 프록시의 market/all은 살아 있는데 orderbook만 실패하면 워커가 구버전인 것 → 직접 호출로 전환 (연결당 한 번만 검사).
+// 프록시/네트워크 자체가 죽은 경우엔 프록시를 유지하고 평소처럼 백오프한다.
+async function shouldBypassProxy(ex, conn) {
+  if (ex !== 'upbit' || EXCHANGES.upbit.rest === UPBIT_DIRECT_REST || conn.proxyChecked) return false;
+  conn.proxyChecked = true;
+  const alive = await fetch(EXCHANGES.upbit.rest + '/market/all', { cache: 'no-store' }).then((r) => r.ok).catch(() => false);
+  if (!alive || conn.stopped || !conn.polling) return false;
+  console.warn('업비트 프록시가 /v1/orderbook을 지원하지 않음 — worker/upbit-proxy.js를 재배포하세요. 그동안 직접 호출로 전환합니다.');
+  EXCHANGES.upbit.rest = UPBIT_DIRECT_REST;
+  return true;
 }
 
 // 폴링 중 WS 연결을 점점 긴 간격으로 재시도 (1.5s → 3s → … → 최대 60s).
@@ -438,8 +688,8 @@ async function applyTokens(next) {
   applying = true;
   try {
     symbols = next;
-    for (const k of Object.keys(prices)) if (!next.includes(k)) delete prices[k];
-    for (const s of next) if (!prices[s]) prices[s] = { upbit: null, bithumb: null };
+    for (const k of Object.keys(books)) if (!next.includes(k)) delete books[k];
+    for (const s of next) if (!books[s]) books[s] = { upbit: null, bithumb: null };
     buildTable();
     await Promise.all(Object.keys(EXCHANGES).map(async (ex) => {
       const codes = await validMarkets(ex, next.map((s) => 'KRW-' + s));
@@ -488,6 +738,7 @@ async function loadProxyConfig() {
 
 // ---------- 시작 ----------
 (async function main() {
+  initTakeSize();
   await loadProxyConfig();
   let first;
   try {
