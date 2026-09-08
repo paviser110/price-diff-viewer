@@ -86,6 +86,8 @@
   td.flash-up   { animation: flashUp .6s ease-out; }
   td.flash-down { animation: flashDown .6s ease-out; }
   .table-scroll { overflow-x: auto; }
+  .strat-title { font-size: 15px; font-weight: 700; margin: 22px 0 8px; }
+  .strat-title:first-child { margin-top: 0; }
   footer { margin-top: 10px; font-size: 11px; color: var(--muted); opacity: .6; text-align: right; }
   #error-box {
     display: none; margin: 12px 0; padding: 10px 14px; font-size: 13px;
@@ -109,33 +111,7 @@
 
   <div id="error-box"></div>
 
-  <div class="table-scroll">
-    <table>
-      <colgroup>
-        <col style="width:72px">
-        <col style="width:98px"><col style="width:98px">
-        <col style="width:98px"><col style="width:98px">
-        <col style="width:88px"><col style="width:68px"><col style="width:72px"><col style="width:80px"><col style="width:84px">
-        <col style="width:88px"><col style="width:68px"><col style="width:72px"><col style="width:80px"><col style="width:84px">
-      </colgroup>
-      <thead>
-        <tr>
-          <th class="tok" rowspan="2">토큰</th>
-          <th class="grp grp-l" colspan="2">빗썸</th>
-          <th class="grp grp-l" colspan="2">업비트</th>
-          <th class="grp grp-l" colspan="5">빗썸 → 업비트</th>
-          <th class="grp grp-l" colspan="5">업비트 → 빗썸</th>
-        </tr>
-        <tr>
-          <th class="grp-l">bid</th><th>ask</th>
-          <th class="grp-l">bid</th><th>ask</th>
-          <th class="grp-l">갭</th><th>슬립</th><th>잔량</th><th>최대</th><th>수익</th>
-          <th class="grp-l">갭</th><th>슬립</th><th>잔량</th><th>최대</th><th>수익</th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
-  </div>
+  <div id="tables"></div>
 
   <footer><span id="app-ver"></span></footer>
 </div>
@@ -143,13 +119,20 @@
 <script>
 'use strict';
 
-const APP_VERSION = '17';
+const APP_VERSION = '18';
 const UPBIT_DIRECT_REST = 'https://api.upbit.com/v1';
 
 const EXCHANGES = {
   // 업비트는 브라우저 Origin별 rate limit이 빡빡해서 폴링을 더 느리게 (한도에 걸리면 요청을 멈춰야 풀림)
   upbit:   { ws: 'wss://api.upbit.com/websocket/v1',      rest: UPBIT_DIRECT_REST,             el: 'st-upbit',   pollMs: 5000 },
   bithumb: { ws: 'wss://ws-api.bithumb.com/websocket/v1', rest: 'https://api.bithumb.com/v1', el: 'st-bithumb', pollMs: 3000 },
+};
+
+const EXNAME = { upbit: '업비트', bithumb: '빗썸' };
+// 표 하나 = 전략 하나: 메이커 거래소(지정가)와 테이커 거래소(시장가). 표 왼쪽엔 메이커 거래소 호가.
+const STRATS = {
+  bithumb: { maker: 'bithumb', taker: 'upbit',   title: '빗썸' },
+  upbit:   { maker: 'upbit',   taker: 'bithumb', title: '업비트' },
 };
 
 const TOKENS_POLL_MS = 3000;
@@ -307,30 +290,31 @@ function maxArb(levels, makerPx, sell) {
   return { notional, profit, used, exhausted: used > 0 && used === levels.length };
 }
 
-// 방향 A: 빗썸 best bid에 매수 지정가(메이커) → 업비트 bid 쪽으로 시장가 매도(테이커)
-function dirA(u, b) {
-  const sim = simulateTake(u.bids, takeSizeKrw);
+// 방향 A: 메이커 거래소 best bid에 매수 지정가 → 테이커 거래소 bid 쪽으로 시장가 매도 (메이커 → 테이커로 코인 이동)
+// mk, tk: Book · MK, TK: 거래소 이름
+function dirBuyMaker(mk, tk, MK, TK) {
+  const sim = simulateTake(tk.bids, takeSizeKrw);
   return {
-    max: maxArb(u.bids, b.bid, true),
-    label: '빗썸 매수(메이커) → 업비트 매도(테이커)', verb: '매도',
-    maker: b.bid, taker: u.bid,
-    gross: (u.bid / b.bid - 1) * 100,
+    max: maxArb(tk.bids, mk.bid, true),
+    label: MK + ' 매수(메이커) → ' + TK + ' 매도(테이커)', verb: '매도', MK, TK,
+    maker: mk.bid, taker: tk.bid,
+    gross: (tk.bid / mk.bid - 1) * 100,
     sim,
-    slip: sim ? Math.max(0, (u.bid - sim.vwap) / u.bid * 100) : null,
-    net: sim ? (sim.vwap / b.bid - 1) * 100 : null,
+    slip: sim ? Math.max(0, (tk.bid - sim.vwap) / tk.bid * 100) : null,
+    net: sim ? (sim.vwap / mk.bid - 1) * 100 : null,
   };
 }
-// 방향 B: 빗썸 best ask에 매도 지정가(메이커) → 업비트 ask 쪽으로 시장가 매수(테이커)
-function dirB(u, b) {
-  const sim = simulateTake(u.asks, takeSizeKrw);
+// 방향 B: 메이커 거래소 best ask에 매도 지정가 → 테이커 거래소 ask 쪽으로 시장가 매수 (테이커 → 메이커로 코인 이동)
+function dirSellMaker(mk, tk, MK, TK) {
+  const sim = simulateTake(tk.asks, takeSizeKrw);
   return {
-    max: maxArb(u.asks, b.ask, false),
-    label: '빗썸 매도(메이커) → 업비트 매수(테이커)', verb: '매수',
-    maker: b.ask, taker: u.ask,
-    gross: (b.ask / u.ask - 1) * 100,
+    max: maxArb(tk.asks, mk.ask, false),
+    label: MK + ' 매도(메이커) → ' + TK + ' 매수(테이커)', verb: '매수', MK, TK,
+    maker: mk.ask, taker: tk.ask,
+    gross: (mk.ask / tk.ask - 1) * 100,
     sim,
-    slip: sim ? Math.max(0, (sim.vwap - u.ask) / u.ask * 100) : null,
-    net: sim ? (b.ask / sim.vwap - 1) * 100 : null,
+    slip: sim ? Math.max(0, (sim.vwap - tk.ask) / tk.ask * 100) : null,
+    net: sim ? (mk.ask / sim.vwap - 1) * 100 : null,
   };
 }
 
@@ -349,10 +333,10 @@ function tooltip(d) {
   const s = d.sim;
   const lines = [
     d.label,
-    '빗썸 ' + fmtPrice(d.maker) + ' (메이커) vs 업비트 ' + fmtPrice(d.taker) + ' (테이커) → 갭 ' + fmtPct(d.gross),
+    d.MK + ' ' + fmtPrice(d.maker) + ' (메이커) vs ' + d.TK + ' ' + fmtPrice(d.taker) + ' (테이커) → 갭 ' + fmtPct(d.gross),
   ];
   if (s) {
-    lines.push('업비트 1호가 잔량 ' + fmtKrwShort(s.bestKrw) + '원' + (s.next != null ? ' · 다음 호가 ' + fmtPrice(s.next) : ''));
+    lines.push(d.TK + ' 1호가 잔량 ' + fmtKrwShort(s.bestKrw) + '원' + (s.next != null ? ' · 다음 호가 ' + fmtPrice(s.next) : ''));
     lines.push(fmtKrwShort(takeSizeKrw) + '원 ' + d.verb + ' 시 VWAP ' + fmtPrice(s.vwap, 2) +
       ' · 슬리피지 ' + d.slip.toFixed(3) + '% · ' + s.used + '호가 소진' +
       (s.short > 0 ? ' · 부족 ' + fmtKrwShort(s.short) + '원 (호가 합 ' + fmtKrwShort(s.depthKrw) + '원)' : ''));
@@ -367,18 +351,35 @@ function tooltip(d) {
 }
 
 // ---------- 테이블 렌더링 ----------
-function buildTable() {
-  const tbody = $('rows');
-  tbody.innerHTML = '';
-  for (const sym of symbols) {
-    const tr = document.createElement('tr');
-    tr.id = 'row-' + sym;
-    const cell = (id) => '<td id="' + sym + '-' + id + '" class="none">−</td>';
-    tr.innerHTML = '<td>' + sym + '</td>' +
-      cell('bithumb-bid') + cell('bithumb-ask') + cell('upbit-bid') + cell('upbit-ask') +
-      cell('a-gap') + cell('a-slip') + cell('a-depth') + cell('a-max') + cell('a-profit') +
-      cell('b-gap') + cell('b-slip') + cell('b-depth') + cell('b-max') + cell('b-profit');
-    tbody.appendChild(tr);
+const COLGROUP =
+  '<colgroup><col style="width:72px">' +
+  '<col style="width:98px"><col style="width:98px"><col style="width:98px"><col style="width:98px">' +
+  '<col style="width:88px"><col style="width:68px"><col style="width:72px"><col style="width:80px"><col style="width:84px">'.repeat(2) +
+  '</colgroup>';
+const SUBHEAD =
+  '<th class="grp-l">bid</th><th>ask</th><th class="grp-l">bid</th><th>ask</th>' +
+  '<th class="grp-l">갭</th><th>슬립</th><th>잔량</th><th>최대</th><th>수익</th>'.repeat(2);
+
+// 전략(메이커 거래소)마다 표 하나. 셀 id는 "전략-심볼-항목".
+function buildTables() {
+  const box = $('tables');
+  box.innerHTML = '';
+  for (const [key, st] of Object.entries(STRATS)) {
+    const MK = EXNAME[st.maker], TK = EXNAME[st.taker];
+    const rows = symbols.map((sym) => {
+      const cell = (id) => '<td id="' + key + '-' + sym + '-' + id + '" class="none">−</td>';
+      return '<tr id="row-' + key + '-' + sym + '"><td>' + sym + '</td>' +
+        cell(st.maker + '-bid') + cell(st.maker + '-ask') + cell(st.taker + '-bid') + cell(st.taker + '-ask') +
+        ['a', 'b'].map((k) => cell(k + '-gap') + cell(k + '-slip') + cell(k + '-depth') + cell(k + '-max') + cell(k + '-profit')).join('') +
+        '</tr>';
+    }).join('');
+    box.insertAdjacentHTML('beforeend',
+      '<h2 class="strat-title">' + st.title + '</h2>' +
+      '<div class="table-scroll"><table>' + COLGROUP +
+      '<thead><tr><th class="tok" rowspan="2">토큰</th>' +
+      '<th class="grp grp-l" colspan="2">' + MK + '</th><th class="grp grp-l" colspan="2">' + TK + '</th>' +
+      '<th class="grp grp-l" colspan="5">' + MK + ' → ' + TK + '</th><th class="grp grp-l" colspan="5">' + TK + ' → ' + MK + '</th></tr>' +
+      '<tr>' + SUBHEAD + '</tr></thead><tbody>' + rows + '</tbody></table></div>');
   }
   for (const k of Object.keys(shown)) delete shown[k];
   // 이미 알고 있는 호가는 즉시 다시 그림 (토큰 목록 변경 시)
@@ -416,29 +417,33 @@ function setCell(id, html, cls, title) {
 
 // 방향별 5칸: 갭(신호등 점 포함) / 슬립 / 업비트 1호가 잔량 / 최대 실행 규모 / 그때 예상 수익.
 // 초록 방향은 연한 초록 띠, 수수료 차감 후 이익 나는 호가가 하나도 없는 방향은 보조 칸을 흐리게.
-function renderDir(sym, key, d) {
+function renderDir(prefix, d) {
   const s = d.sim, m = d.max, tip = tooltip(d), sig = signal(d);
   const band = sig === 'good' ? ' sig-good' : (m.used === 0 ? ' dim' : '');
   const sub = 'sub' + band;
-  setCell(sym + '-' + key + '-gap', '<span class="hdot ' + sig + '"></span>' + fmtPct(d.gross), 'gap ' + pctCls(d.gross) + band, tip);
-  setCell(sym + '-' + key + '-slip', !s ? '−' : (s.short > 0 ? '부족' : d.slip.toFixed(3) + '%'), sub + (s && s.short > 0 ? ' bad-text' : ''), tip);
-  setCell(sym + '-' + key + '-depth', s ? fmtKrwShort(s.bestKrw) : '−', sub, tip);
-  setCell(sym + '-' + key + '-max', m.used ? fmtKrwShort(m.notional) + (m.exhausted ? '+' : '') : '−', sub, tip);
-  setCell(sym + '-' + key + '-profit', m.used ? '+' + fmtKrwShort(m.profit) : '−', sub + (m.used ? ' profit' : ''), tip);
+  setCell(prefix + '-gap', '<span class="hdot ' + sig + '"></span>' + fmtPct(d.gross), 'gap ' + pctCls(d.gross) + band, tip);
+  setCell(prefix + '-slip', !s ? '−' : (s.short > 0 ? '부족' : d.slip.toFixed(3) + '%'), sub + (s && s.short > 0 ? ' bad-text' : ''), tip);
+  setCell(prefix + '-depth', s ? fmtKrwShort(s.bestKrw) : '−', sub, tip);
+  setCell(prefix + '-max', m.used ? fmtKrwShort(m.notional) + (m.exhausted ? '+' : '') : '−', sub, tip);
+  setCell(prefix + '-profit', m.used ? '+' + fmtKrwShort(m.profit) : '−', sub + (m.used ? ' profit' : ''), tip);
 }
 
 function renderRow(sym) {
   const bk = books[sym];
   if (!bk) return;
-  for (const ex of Object.keys(EXCHANGES)) {
-    const b = bk[ex];
-    if (!b) continue;
-    renderPrice(sym + '-' + ex + '-bid', b.bid);
-    renderPrice(sym + '-' + ex + '-ask', b.ask);
+  for (const [key, st] of Object.entries(STRATS)) {
+    for (const ex of Object.keys(EXCHANGES)) {
+      const b = bk[ex];
+      if (!b) continue;
+      renderPrice(key + '-' + sym + '-' + ex + '-bid', b.bid);
+      renderPrice(key + '-' + sym + '-' + ex + '-ask', b.ask);
+    }
+    const mk = bk[st.maker], tk = bk[st.taker];
+    if (!mk || !tk) continue;
+    const MK = EXNAME[st.maker], TK = EXNAME[st.taker];
+    renderDir(key + '-' + sym + '-a', dirBuyMaker(mk, tk, MK, TK));
+    renderDir(key + '-' + sym + '-b', dirSellMaker(mk, tk, MK, TK));
   }
-  if (!bk.upbit || !bk.bithumb) return;
-  renderDir(sym, 'a', dirA(bk.upbit, bk.bithumb));
-  renderDir(sym, 'b', dirB(bk.upbit, bk.bithumb));
 }
 
 // 호가 스트림은 초당 수십 건이라 프레임 단위로 모아서 그림
@@ -486,14 +491,16 @@ function paintStalePrices() {
   for (const sym of symbols) {
     const p = saved.books[sym];
     if (!p) continue;
-    for (const ex of Object.keys(EXCHANGES)) {
-      if (!p[ex]) continue;
-      for (const side of ['bid', 'ask']) {
-        const el = $(sym + '-' + ex + '-' + side);
-        if (p[ex][side] != null && el && el.textContent === '−') {
-          el.textContent = fmtPrice(p[ex][side]);
-          el.className = 'stale';
-          painted = true;
+    for (const key of Object.keys(STRATS)) {
+      for (const ex of Object.keys(EXCHANGES)) {
+        if (!p[ex]) continue;
+        for (const side of ['bid', 'ask']) {
+          const el = $(key + '-' + sym + '-' + ex + '-' + side);
+          if (p[ex][side] != null && el && el.textContent === '−') {
+            el.textContent = fmtPrice(p[ex][side]);
+            el.className = 'stale';
+            painted = true;
+          }
         }
       }
     }
@@ -690,7 +697,7 @@ async function applyTokens(next) {
     symbols = next;
     for (const k of Object.keys(books)) if (!next.includes(k)) delete books[k];
     for (const s of next) if (!books[s]) books[s] = { upbit: null, bithumb: null };
-    buildTable();
+    buildTables();
     await Promise.all(Object.keys(EXCHANGES).map(async (ex) => {
       const codes = await validMarkets(ex, next.map((s) => 'KRW-' + s));
       startExchange(ex, codes);
