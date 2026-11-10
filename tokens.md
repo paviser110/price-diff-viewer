@@ -8,8 +8,8 @@
 - SOL
 - DOGE
 - KAIA
-- SONIC
-- ATH
+- AZTEC
+- PENGU
 - OP
 - SAHARA
 - TOSHI
